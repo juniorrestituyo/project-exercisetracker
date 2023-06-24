@@ -25,112 +25,124 @@ mongoose.connect(
 )
 
 // Schemas
-const logSubSchema = new mongoose.Schema({
+const userSchema = new mongoose.Schema({
+  username: String,
+})
+
+const exerciseSchema = new mongoose.Schema({
+  user_id: {type: String, required: true},
   description: String,
   duration: Number,
-  date: String
-}, { _id : false })
-  
-const userSchema = new mongoose.Schema({
-  username: {
-    type: String,
-    required: true,
-    trim: true,
-    lowercase: true
-  },
-  count: Number,
-  log: [logSubSchema]
+  date: Date
 })
+  
 
 // Models
 const User = mongoose.model('User', userSchema)
+const Exercise = mongoose.model('Exercise', exerciseSchema)
 
 // Endpoints
-app.route('/api/users')
-  .post( (req, res) => {
-    const username = req.body.username
-    
-    const newUser = new User({
-      username: username
-    })
-    
-    newUser.save(function(err, data) {
-      res.json(data)
-    })
-  })
-  .get( (req, res) => {
-    User.find({}).exec(function(err, data) {
-      res.json(data)
-    })
-  })
+app.get('/api/users', async (req, res) => {
+  const users = await User.find({}).select('_id username')
 
-app.post('/api/users/:_id/exercises', (req, res) => {
-  const id = req.params._id
-  const description = req.body.description
-  const duration = req.body.duration
-  
-  let dateRaw = new Date(req.body.date)
-  
-  if(!req.body.date) {
-    dateRaw = new Date()
+  if(!users) {
+    res.send("No users")
+    
+  } else {
+    res.json(users)
   }
-  
-  const date = dateRaw.toDateString()
-  
-  User
-    .findById({ _id: id })
-    .exec(function(err, user) {
-      user.count = user.__v + 1
-      user.log.push({
-        description: description,
-        duration: duration,
-        date: date
-      })
-
-      user.save(function(err, data) {
-        for(let i = 0; data.__v > i; i++) {
-          res.json({
-            username: data.username,
-            description: data.log[i].description,
-            duration: data.log[i].duration,
-            date: data.log[i].date,
-            _id: data._id
-          })
-        }
-      })
-    })
 })
 
-app.get('/api/users/:_id/logs', (req, res) => {
+app.post('/api/users', async (req, res) => {
+  const newUser = new User({
+    username: req.body.username
+  })
+
+  try {
+    const user = await newUser.save()
+    console.log(user)
+    res.json(user)
+    
+  } catch (err) {
+    console.log(err)
+  }
+})
+
+app.post('/api/users/:_id/exercises', async (req, res) => {
   const id = req.params._id
-  const dateFrom = new Date(req.query.from)
-  const dateTo = new Date(req.query.to)
-  const limit = req.query.limit
+  const { description, duration, date } = req.body
 
-  User
-    .findById({ _id: id })
-    .exec(function(err, user) {
-      if(limit) {
-        user.count = limit
-      }
+  try {
+    const user = await User.findById(id)
+    
+    if(!user) {
+      res.send("Could not find user")
+      
+    } else {
+      const newExercise = new Exercise({
+        user_id: user._id,
+        description,
+        duration,
+        date: date ? new Date(date) : new Date()
+      })
+      const exercise = await newExercise.save()
 
-      if(user.count > 1) {
-        res.json({
-          username: user.username,
-          count: user.count,
-          _id: user._id,
-          log: user.log
-        })
-      } else {
-        for(let i = 0; user.count > i; i++) {
-        res.json({
-          username: user.username,
-          count: user.count,
-          _id: user._id,
-          log: [user.log[i]]
-        })
-      }
+      res.json({
+        _id: user._id,
+        username: user.username,
+        description: exercise.description,
+        duration: exercise.duration,
+        date: new Date(exercise.date).toDateString()
+      })
     }
+    
+  } catch (err) {
+    console.log(err)
+    res.send("There was an error saving the execrise")
+  }
+})
+
+app.get('/api/users/:_id/logs', async (req, res) => {
+  const id = req.params._id
+  const { from, to, limit } = req.query
+
+  const user = await User.findById(id)
+
+  if(!user) {
+    res.send('Could not find user')
+    
+  } else {
+    let dateObj = {}
+    
+    if (from) {
+      dateObj["$gte"] = new Date(from)
+    }
+    if (to) {
+      dateObj["$lte"] = new Date(to)
+    }
+    
+    let filter = {
+      user_id: id
+    }
+    
+    if(from || to) {
+      filter.date = dateObj
+    }
+  }
+
+  const exercises = await Exercise.find(filter).limit(+limit ?? 500)
+
+  const log = exercises.map(e => ({
+    description: e.description,
+    duration: e.duration,
+    date: e.date.toDateString()
+  }))
+  
+  res.json({
+    username: user.username,
+    count: exercises.length,
+    _id: user._id,
+    log
   })
 })
 
